@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>作业帮-AI口语升级</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #e8eef7;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .stage {
+    width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  /* 平板设备容器：保持外框图比例(1535/1200)，随视口缩放 */
+  .device {
+    position: relative;
+    aspect-ratio: 1535 / 1200;
+    width: min(100vw, calc(100vh * 1535 / 1200));
+    max-width: 100vw; max-height: 100vh;
+  }
+  /* 外框图叠在最上层，透明屏幕孔露出内容，不拦截点击 */
+  .device .frame {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none; z-index: 5;
+  }
+  /* 内容画布：精确定位到外框内的屏幕孔区域 */
+  .canvas {
+    position: absolute;
+    left: 6.384%; top: 9.000%;
+    width: 87.231%; height: 81.917%;
+    background: #dfeaf8; overflow: hidden;
+    border-radius: 2%; z-index: 1;
+  }
+  .view { position: absolute; inset: 0; display: none; }
+  .view.active { display: block; }
+  .bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .layer { position: absolute; }
+  .layer img { display: block; width: 100%; height: 100%; }
+  /* 可滚动长卡片：裁剪可见区，内部按原比例上下滚。
+     隐藏滚动条，使滚动区与外部页面贴合无缝 */
+  .layer.scroll {
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;      /* Firefox */
+    -ms-overflow-style: none;   /* 旧版 Edge/IE */
+  }
+  .layer.scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }  /* Chrome/Safari */
+  .layer.scroll img { height: auto; }
+  .link { cursor: pointer; transition: transform .12s ease; }
+  .link:hover { transform: scale(1.01); }
+  .link:active { transform: scale(0.99); }
+
+  /* ===== 方案二：手势幽灵引导 =====
+     进入页面时，主要交互键上方播放"手指点击 + 涟漪扩散"引导，播放 3 轮后自动消失。
+     品牌色（涟漪颜色），仅需改这里即可换色 */
+  :root { --brand: 74, 125, 245; }
+  /* 幽灵引导容器：绝对居中于目标按钮，不拦截点击 */
+  .ghost-hint {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; align-items: center;
+    pointer-events: none; z-index: 20;
+  }
+  /* 涟漪：由小扩散至大并淡出 */
+  .ghost-hint .ripple {
+    position: absolute; left: 50%; top: 50%;
+    width: 36px; height: 36px; margin: -18px 0 0 -18px;
+    border-radius: 50%; background: rgba(var(--brand), 0.6);   /* 默认：蓝色涟漪，内页用 */
+    animation: ghost-ripple 1.6s ease-out infinite;
+  }
+  /* 仅首页涟漪为白色 */
+  #page0 .ghost-hint .ripple { background: rgba(255, 255, 255, 0.8); }
+  @keyframes ghost-ripple {
+    0%   { transform: scale(0.5); opacity: .7; }
+    80%  { opacity: 0; }
+    100% { transform: scale(2.6); opacity: 0; }
+  }
+  /* 手指图标：30% 透明度，做点击下压动作 */
+  .ghost-hint .finger {
+    font-size: 30px; line-height: 1; opacity: .3;
+    animation: ghost-tap 1.6s ease-in-out 3;
+  }
+  @keyframes ghost-tap {
+    0%, 100% { transform: translateY(-2px); }
+    30%, 45% { transform: translateY(5px); }
+  }
+  /* 极短文案气泡 */
+  .ghost-hint .ghost-label {
+    margin-top: 4px; font-size: 12px; white-space: nowrap;
+    color: rgba(60,72,98,.6); background: rgba(255,255,255,.6);
+    padding: 1px 7px; border-radius: 8px;
+    animation: ghost-fade 1.6s ease-in-out 3;
+  }
+  @keyframes ghost-fade { 0%,100%{opacity:.35;} 50%{opacity:.75;} }
+  /* 目标区域轻微缩放回弹 1.03 倍 */
+  .link.ghosting { animation: ghost-scale 1.6s ease-in-out infinite; }
+  @keyframes ghost-scale {
+    0%, 100% { transform: scale(1); }
+    30%, 45% { transform: scale(1.03); }
+  }
+
+  /* ===== 热区标注：鼠标触及热区时，显示透明框 + 标注文字 =====
+     交互键文字来自 labels.js 的 HOTSPOT_LABELS；
+     非交互热区（普通 .layer）文字来自 HOTSPOT_NOTES，均可直接改文件后刷新 */
+  /* 标注框：定位在热区外部正下方，居中对齐 */
+  .layer .hotspot-box {
+    position: absolute; top: 100%; left: 50%;
+    transform: translateX(-50%);
+    margin-top: 2px;
+    opacity: 0; transition: opacity .15s ease;
+    pointer-events: none; z-index: 30;
+  }
+  .layer:hover > .hotspot-box { opacity: 1; }
+  /* 标注方向变体：默认在下方；标注文字结尾加 @right/@left/@top 可改到右/左/上方。
+     在 labels.js 的标注文字末尾写 " @right" 即用对应变体。 */
+  .layer .hotspot-box.hotspot-box--right {
+    top: 50%; left: 100%; transform: translateY(-50%);
+    margin: 0 0 0 6px;
+  }
+  .layer .hotspot-box.hotspot-box--left {
+    top: 50%; left: auto; right: 100%; transform: translateY(-50%);
+    margin: 0 6px 0 0;
+  }
+  .layer .hotspot-box.hotspot-box--top {
+    top: auto; bottom: 100%; left: 50%; transform: translateX(-50%);
+    margin: 0 0 2px 0;
+  }
+  /* 非交互热区带标注时，用 "help" 光标提示可查看说明（区别于交互键的手型） */
+  .layer.noted { cursor: help; }
+  .layer .hotspot-box .hotspot-label {
+    display: inline-block;
+    font-size: 12px; line-height: 1.2; color: #000;
+    background: rgba(255, 255, 255, .6);
+    padding: 3px 9px; border-radius: 6px; white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
+  }
+  /* 右下角水印标注：固定在画布内，覆盖所有页面，随画布缩放 */
+  .watermark {
+    position: absolute; left: 50%; bottom: 1.5%;
+    transform: translateX(-50%);
+    color: #9aa3b0; font-size: 14px; letter-spacing: .5px;
+    pointer-events: none; user-select: none; z-index: 10;
+    text-shadow: 0 1px 2px rgba(255,255,255,0.5);
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="device">
+  <div class="canvas">
+    <section class="view active" id="page0">
+      <img class="bg" src="images/-2.png" alt="" />
+      <div class="layer link" style="left:66.02%; top:58.79%; width:28.68%; height:31.71%;" onclick="showView('p4-1')">
+        <img src="images/4-3.png" alt="" />
+      </div>
+      <div class="layer link" style="left:35.75%; top:58.79%; width:28.68%; height:31.71%;" onclick="showView('p3-1')">
+        <img src="images/3-4.png" alt="" />
+      </div>
+      <div class="layer link" style="left:5.48%; top:60.71%; width:28.74%; height:29.79%;" onclick="showView('p2-1')">
+        <img src="images/2-5.png" alt="" />
+      </div>
+      <div class="layer link" style="left:33.70%; top:27.75%; width:60.97%; height:27.83%;" onclick="showView('p1-1')">
+        <img src="images/1-6.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-1">
+      <img class="bg" src="images/-8.png" alt="" />
+      <div class="layer link" style="left:34.74%; top:34.62%; width:30.55%; height:15.21%;" onclick="showView('p1-3')">
+        <img src="images/3-9.png" alt="" />
+      </div>
+      <div class="layer link" style="left:94.09%; top:6.50%; width:1.62%; height:1.29%;" onclick="showView('p1-2')">
+        <img src="images/2-10.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-11.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-10">
+      <img class="bg" src="images/-55.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-11')">
+        <img src="images/2-56.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-8')">
+        <img src="images/1-57.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-11">
+      <img class="bg" src="images/-59.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p1-12')">
+        <img src="images/2-60.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-8')">
+        <img src="images/1-61.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-12">
+      <img class="bg" src="images/-63.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-13')">
+        <img src="images/2-64.png" alt="" />
+      </div>
+      <div class="layer link" style="left:3.98%; top:5.67%; width:1.26%; height:2.88%;" onclick="showView('p1-8')">
+        <img src="images/1-65.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-13">
+      <img class="bg" src="images/-67.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p1-14')">
+        <img src="images/2-68.png" alt="" />
+      </div>
+      <div class="layer link" style="left:3.98%; top:5.67%; width:1.26%; height:2.88%;" onclick="showView('p1-8')">
+        <img src="images/1-69.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-14">
+      <img class="bg" src="images/-71.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p1-15')">
+        <img src="images/5-72.png" alt="" />
+      </div>
+      <div class="layer" style="left:75.83%; top:21.25%; width:19.42%; height:10.25%;">
+        <img src="images/4-73.png" alt="" />
+      </div>
+      <div class="layer link" style="left:57.38%; top:21.83%; width:17.92%; height:9.67%;" onclick="showView('p1-8')">
+        <img src="images/3-74.png" alt="" />
+      </div>
+      <div class="layer link" style="left:39.06%; top:21.83%; width:17.74%; height:9.67%;" onclick="showView('p1-3')">
+        <img src="images/2-75.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-1')">
+        <img src="images/1-76.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-15">
+      <img class="bg" src="images/-78.png" alt="" />
+      <div class="layer link" style="left:88.88%; top:87.46%; width:5.58%; height:7.58%;" onclick="showView('p1-16')">
+        <img src="images/3-79.png" alt="" />
+      </div>
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-17')">
+        <img src="images/2-80.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-14')">
+        <img src="images/1-81.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-16">
+      <img class="bg" src="images/-83.png" alt="" />
+      <div class="layer link" style="left:88.85%; top:87.46%; width:5.64%; height:7.62%;" onclick="showView('p1-15')">
+        <img src="images/3-84.png" alt="" />
+      </div>
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-17')">
+        <img src="images/2-85.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-14')">
+        <img src="images/1-86.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-17">
+      <img class="bg" src="images/-88.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p1-18')">
+        <img src="images/2-89.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-14')">
+        <img src="images/1-90.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-18">
+      <img class="bg" src="images/-92.png" alt="" />
+      <div class="layer link" style="left:88.88%; top:87.46%; width:5.58%; height:7.58%;" onclick="showView('p1-20')">
+        <img src="images/4-93.png" alt="" />
+      </div>
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-21')">
+        <img src="images/3-94.png" alt="" />
+      </div>
+      <div class="layer link" style="left:43.08%; top:30.54%; width:3.19%; height:4.33%;" onclick="showView('p1-19')">
+        <img src="images/2-95.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-14')">
+        <img src="images/1-96.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-19">
+      <img class="bg" src="images/-98.png" alt="" />
+      <div class="layer link" style="left:88.88%; top:87.46%; width:5.58%; height:7.58%;" onclick="showView('p1-20')">
+        <img src="images/4-99.png" alt="" />
+      </div>
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-21')">
+        <img src="images/3-100.png" alt="" />
+      </div>
+      <div class="layer link" style="left:43.11%; top:28.67%; width:3.25%; height:4.42%;" onclick="showView('p1-18')">
+        <img src="images/2-101.png" alt="" />
+      </div>
+      <div class="layer link" style="left:3.98%; top:5.67%; width:1.26%; height:2.88%;" onclick="showView('p1-14')">
+        <img src="images/1-102.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-2">
+      <img class="bg" src="images/-13.png" alt="" />
+      <div class="layer link" style="left:42.37%; top:66.38%; width:15.29%; height:6.50%;" onclick="showView('p1-1')">
+        <img src="images/1-14.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-20">
+      <img class="bg" src="images/-104.png" alt="" />
+      <div class="layer link" style="left:88.85%; top:87.46%; width:5.64%; height:7.62%;" onclick="showView('p1-19')">
+        <img src="images/4-105.png" alt="" />
+      </div>
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-21')">
+        <img src="images/3-106.png" alt="" />
+      </div>
+      <div class="layer link" style="left:43.11%; top:28.67%; width:3.25%; height:4.42%;" onclick="showView('p1-18')">
+        <img src="images/2-107.png" alt="" />
+      </div>
+      <div class="layer link" style="left:3.98%; top:5.67%; width:1.26%; height:2.88%;" onclick="showView('p1-14')">
+        <img src="images/1-108.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-21">
+      <img class="bg" src="images/-110.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('sec1')">
+        <img src="images/2-111.png" alt="" />
+      </div>
+      <div class="layer link" style="left:3.98%; top:5.67%; width:1.26%; height:2.88%;" onclick="showView('p1-14')">
+        <img src="images/1-112.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-3">
+      <img class="bg" src="images/-16.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p1-4')">
+        <img src="images/5-17.png" alt="" />
+      </div>
+      <div class="layer link" style="left:75.83%; top:21.79%; width:17.71%; height:9.71%;" onclick="showView('p1-14')">
+        <img src="images/4-18.png" alt="" />
+      </div>
+      <div class="layer link" style="left:57.38%; top:21.83%; width:17.92%; height:9.67%;" onclick="showView('p1-8')">
+        <img src="images/3-19.png" alt="" />
+      </div>
+      <div class="layer" style="left:39.06%; top:21.83%; width:17.74%; height:9.67%;">
+        <img src="images/2-20.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-1')">
+        <img src="images/1-21.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-4">
+      <img class="bg" src="images/-23.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-5')">
+        <img src="images/2-24.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-3')">
+        <img src="images/1-25.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-5">
+      <img class="bg" src="images/-27.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p1-6')">
+        <img src="images/2-28.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-3')">
+        <img src="images/1-29.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-6">
+      <img class="bg" src="images/-31.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p1-7')">
+        <img src="images/2-32.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-3')">
+        <img src="images/1-33.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-7">
+      <img class="bg" src="images/-35.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p1-8')">
+        <img src="images/2-36.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-3')">
+        <img src="images/1-37.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-8">
+      <img class="bg" src="images/-39.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p1-10')">
+        <img src="images/6-40.png" alt="" />
+      </div>
+      <div class="layer link" style="left:71.66%; top:49.38%; width:13.73%; height:18.62%;" onclick="showView('p1-9')">
+        <img src="images/5-41.png" alt="" />
+      </div>
+      <div class="layer link" style="left:75.83%; top:21.79%; width:17.71%; height:9.71%;" onclick="showView('p1-14')">
+        <img src="images/4-42.png" alt="" />
+      </div>
+      <div class="layer" style="left:57.38%; top:21.83%; width:17.92%; height:9.67%;">
+        <img src="images/3-43.png" alt="" />
+      </div>
+      <div class="layer link" style="left:39.06%; top:21.83%; width:17.74%; height:9.67%;" onclick="showView('p1-3')">
+        <img src="images/2-44.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-1')">
+        <img src="images/1-45.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p1-9">
+      <img class="bg" src="images/-47.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p1-10')">
+        <img src="images/6-48.png" alt="" />
+      </div>
+      <div class="layer link" style="left:55.42%; top:49.38%; width:13.73%; height:18.62%;" onclick="showView('p1-8')">
+        <img src="images/5-49.png" alt="" />
+      </div>
+      <div class="layer link" style="left:75.83%; top:21.79%; width:17.71%; height:9.71%;" onclick="showView('p1-14')">
+        <img src="images/4-50.png" alt="" />
+      </div>
+      <div class="layer" style="left:57.38%; top:21.83%; width:17.92%; height:9.67%;">
+        <img src="images/3-51.png" alt="" />
+      </div>
+      <div class="layer link" style="left:39.06%; top:21.83%; width:17.74%; height:9.67%;" onclick="showView('p1-3')">
+        <img src="images/2-52.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-1')">
+        <img src="images/1-53.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="sec1">
+      <img class="bg" src="images/-253.png" alt="" />
+      <div class="layer link" style="left:27.24%; top:88.79%; width:20.53%; height:7.00%;" onclick="showView('p1-3')">
+        <img src="images/4-254.png" alt="" />
+      </div>
+      <div class="layer scroll" style="left:50.67%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/3-255.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer scroll" style="left:3.16%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/2-256.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p1-1')">
+        <img src="images/1-257.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-1">
+      <img class="bg" src="images/-114.png" alt="" />
+      <div class="layer link" style="left:94.33%; top:6.29%; width:1.16%; height:1.58%;" onclick="showView('p2-2')">
+        <img src="images/-115.png" alt="" />
+      </div>
+      <div class="layer link" style="left:2.91%; top:41.75%; width:30.55%; height:15.21%;" onclick="showView('p2-4')">
+        <img src="images/4-116.png" alt="" />
+      </div>
+      <div class="layer link" style="left:22.15%; top:35.33%; width:8.95%; height:2.29%;" onclick="showView('p2-3')">
+        <img src="images/3-117.png" alt="" />
+      </div>
+      <div class="layer" style="left:7.02%; top:34.96%; width:10.36%; height:4.79%;">
+        <img src="images/2-118.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.67%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-119.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-2">
+      <img class="bg" src="images/-121.png" alt="" />
+      <div class="layer link" style="left:65.99%; top:22.42%; width:1.44%; height:1.96%;" onclick="showView('p2-1')">
+        <img src="images/1-122.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-3">
+      <img class="bg" src="images/-124.png" alt="" />
+      <div class="layer link" style="left:2.91%; top:60.42%; width:30.55%; height:15.21%;" onclick="showView('p2-5')">
+        <img src="images/4-125.png" alt="" />
+      </div>
+      <div class="layer" style="left:21.51%; top:35.04%; width:10.20%; height:4.71%;">
+        <img src="images/3-126.png" alt="" />
+      </div>
+      <div class="layer link" style="left:7.69%; top:35.25%; width:9.04%; height:2.33%;" onclick="showView('p2-1')">
+        <img src="images/2-127.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.67%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-128.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-4">
+      <img class="bg" src="images/-130.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p2-6')">
+        <img src="images/2-131.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.67%; width:1.19%; height:2.79%;" onclick="showView('p2-1')">
+        <img src="images/1-132.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-5">
+      <img class="bg" src="images/-134.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p2-8')">
+        <img src="images/2-135.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.67%; width:1.19%; height:2.79%;" onclick="showView('p2-3')">
+        <img src="images/1-136.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-6">
+      <img class="bg" src="images/-138.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p2-7')">
+        <img src="images/2-139.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p2-4')">
+        <img src="images/-140.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-7">
+      <img class="bg" src="images/-142.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('sec2')">
+        <img src="images/2-143.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p2-4')">
+        <img src="images/1-144.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-8">
+      <img class="bg" src="images/-146.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p2-9')">
+        <img src="images/2-147.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p2-5')">
+        <img src="images/1-148.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p2-9">
+      <img class="bg" src="images/-150.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('sec2')">
+        <img src="images/2-151.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p2-5')">
+        <img src="images/1-152.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="sec2">
+      <img class="bg" src="images/-259.png" alt="" />
+      <div class="layer link" style="left:27.24%; top:88.79%; width:20.53%; height:7.00%;" onclick="showView('p2-4')">
+        <img src="images/4-260.png" alt="" />
+      </div>
+      <div class="layer scroll" style="left:50.67%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/3-261.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer scroll" style="left:3.16%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/2-262.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.67%; width:1.19%; height:2.79%;" onclick="showView('p2-1')">
+        <img src="images/1-263.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-1">
+      <img class="bg" src="images/-154.png" alt="" />
+      <div class="layer link" style="left:2.91%; top:41.75%; width:30.55%; height:15.21%;" onclick="showView('p3-3')">
+        <img src="images/4-155.png" alt="" />
+      </div>
+      <div class="layer link" style="left:22.98%; top:35.29%; width:10.51%; height:2.29%;" onclick="showView('p3-2')">
+        <img src="images/3-156.png" alt="" />
+      </div>
+      <div class="layer" style="left:6.28%; top:35.00%; width:12.01%; height:4.75%;">
+        <img src="images/2-157.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-158.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-2">
+      <img class="bg" src="images/-160.png" alt="" />
+      <div class="layer link" style="left:66.57%; top:41.75%; width:30.55%; height:15.21%;" onclick="showView('p3-7')">
+        <img src="images/4-161.png" alt="" />
+      </div>
+      <div class="layer" style="left:22.24%; top:35.00%; width:11.98%; height:4.75%;">
+        <img src="images/3-162.png" alt="" />
+      </div>
+      <div class="layer link" style="left:7.02%; top:35.29%; width:10.51%; height:2.29%;" onclick="showView('p3-1')">
+        <img src="images/2-163.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-164.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-3">
+      <img class="bg" src="images/-166.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p3-4')">
+        <img src="images/2-167.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-1')">
+        <img src="images/1-168.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-4">
+      <img class="bg" src="images/-170.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p3-5')">
+        <img src="images/2-171.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-3')">
+        <img src="images/1-172.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-5">
+      <img class="bg" src="images/-174.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p3-6')">
+        <img src="images/2-175.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-3')">
+        <img src="images/1-176.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-6">
+      <img class="bg" src="images/-178.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('sec3')">
+        <img src="images/2-179.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-3')">
+        <img src="images/1-180.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-7">
+      <img class="bg" src="images/-182.png" alt="" />
+      <div class="layer link" style="left:39.80%; top:85.54%; width:20.53%; height:7.50%;" onclick="showView('p3-8')">
+        <img src="images/2-183.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-2')">
+        <img src="images/1-184.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-8">
+      <img class="bg" src="images/-186.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p3-9')">
+        <img src="images/2-187.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-7')">
+        <img src="images/1-188.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p3-9">
+      <img class="bg" src="images/-190.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('sec3')">
+        <img src="images/2-191.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-7')">
+        <img src="images/1-192.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="sec3">
+      <img class="bg" src="images/-265.png" alt="" />
+      <div class="layer link" style="left:27.24%; top:88.79%; width:20.53%; height:7.00%;" onclick="showView('p3-3')">
+        <img src="images/4-266.png" alt="" />
+      </div>
+      <div class="layer scroll" style="left:50.67%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/3-267.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer scroll" style="left:3.16%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/2-268.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p3-1')">
+        <img src="images/1-269.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-1">
+      <img class="bg" src="images/-194.png" alt="" />
+      <div class="layer link" style="left:37.53%; top:78.92%; width:24.94%; height:9.12%;" onclick="showView('p4-4')">
+        <img src="images/5-195.png" alt="" />
+      </div>
+      <div class="layer link" style="left:66.79%; top:30.88%; width:27.91%; height:38.67%;" onclick="showView('p4-3')">
+        <img src="images/4-196.png" alt="" />
+      </div>
+      <div class="layer link" style="left:36.09%; top:30.88%; width:27.91%; height:38.67%;" onclick="showView('p4-2')">
+        <img src="images/3-197.png" alt="" />
+      </div>
+      <div class="layer" style="left:5.27%; top:30.79%; width:28.03%; height:38.83%;">
+        <img src="images/2-198.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-199.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-10">
+      <img class="bg" src="images/-241.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('sec4')">
+        <img src="images/2-242.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-12')">
+        <img src="images/1-243.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-11">
+      <img class="bg" src="images/-245.png" alt="" />
+      <div class="layer link" style="left:51.01%; top:55.42%; width:13.33%; height:6.67%;" onclick="showView('p4-5')">
+        <img src="images/2-246.png" alt="" />
+      </div>
+      <div class="layer link" style="left:35.69%; top:55.42%; width:13.33%; height:6.67%;" onclick="showView('p4-2')">
+        <img src="images/1-247.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-12">
+      <img class="bg" src="images/-249.png" alt="" />
+      <div class="layer link" style="left:51.01%; top:55.42%; width:13.33%; height:6.67%;" onclick="showView('p4-9')">
+        <img src="images/2-250.png" alt="" />
+      </div>
+      <div class="layer link" style="left:35.69%; top:55.42%; width:13.33%; height:6.67%;" onclick="showView('p4-2')">
+        <img src="images/1-251.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-2">
+      <img class="bg" src="images/-201.png" alt="" />
+      <div class="layer link" style="left:37.53%; top:78.92%; width:24.94%; height:9.12%;" onclick="showView('p4-4')">
+        <img src="images/5-202.png" alt="" />
+      </div>
+      <div class="layer link" style="left:66.79%; top:30.88%; width:27.91%; height:38.67%;" onclick="showView('p4-3')">
+        <img src="images/4-203.png" alt="" />
+      </div>
+      <div class="layer" style="left:36.03%; top:30.79%; width:28.03%; height:38.83%;">
+        <img src="images/3-204.png" alt="" />
+      </div>
+      <div class="layer link" style="left:5.33%; top:30.88%; width:27.91%; height:38.67%;" onclick="showView('p4-1')">
+        <img src="images/2-205.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-206.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-3">
+      <img class="bg" src="images/-208.png" alt="" />
+      <div class="layer link" style="left:37.53%; top:78.92%; width:24.94%; height:9.12%;" onclick="showView('p4-4')">
+        <img src="images/5-209.png" alt="" />
+      </div>
+      <div class="layer" style="left:66.73%; top:30.79%; width:28.03%; height:38.83%;">
+        <img src="images/4-210.png" alt="" />
+      </div>
+      <div class="layer link" style="left:36.09%; top:30.88%; width:27.91%; height:38.67%;" onclick="showView('p4-2')">
+        <img src="images/3-211.png" alt="" />
+      </div>
+      <div class="layer link" style="left:5.33%; top:30.88%; width:27.91%; height:38.67%;" onclick="showView('p4-1')">
+        <img src="images/2-212.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('page0')">
+        <img src="images/1-213.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-4">
+      <img class="bg" src="images/-215.png" alt="" />
+      <div class="layer link" style="left:45.71%; top:68.96%; width:8.85%; height:3.29%;" onclick="showView('p4-5')">
+        <img src="images/2-216.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-2')">
+        <img src="images/1-217.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-5">
+      <img class="bg" src="images/-219.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p4-7')">
+        <img src="images/3-220.png" alt="" />
+      </div>
+      <div class="layer link" style="left:43.32%; top:66.46%; width:2.21%; height:3.00%;" onclick="showView('p4-6')">
+        <img src="images/2-221.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-11')">
+        <img src="images/1-222.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-6">
+      <img class="bg" src="images/-224.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p4-7')">
+        <img src="images/3-225.png" alt="" />
+      </div>
+      <div class="layer link" style="left:43.32%; top:66.46%; width:2.21%; height:3.00%;" onclick="showView('p4-5')">
+        <img src="images/2-226.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-11')">
+        <img src="images/1-227.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-7">
+      <img class="bg" src="images/-229.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p4-8')">
+        <img src="images/2-230.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-11')">
+        <img src="images/1-231.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-8">
+      <img class="bg" src="images/-233.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.04%; width:7.72%; height:10.42%;" onclick="showView('p4-9')">
+        <img src="images/2-234.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-11')">
+        <img src="images/1-235.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="p4-9">
+      <img class="bg" src="images/-237.png" alt="" />
+      <div class="layer link" style="left:46.14%; top:79.12%; width:7.72%; height:10.33%;" onclick="showView('p4-10')">
+        <img src="images/2-238.png" alt="" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-12')">
+        <img src="images/1-239.png" alt="" />
+      </div>
+    </section>
+
+    <section class="view" id="sec4">
+      <img class="bg" src="images/-271.png" alt="" />
+      <div class="layer link" style="left:51.96%; top:88.29%; width:20.53%; height:7.50%;" onclick="showView('p4-2')">
+        <img src="images/5-272.png" alt="" />
+      </div>
+      <div class="layer link" style="left:27.24%; top:88.79%; width:20.53%; height:7.00%;" onclick="showView('p4-2')">
+        <img src="images/4-273.png" alt="" />
+      </div>
+      <div class="layer scroll" style="left:50.67%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/3-274.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer scroll" style="left:3.16%; top:19.83%; width:46.17%; height:61.79%; overflow-y:auto;">
+        <img src="images/2-275.png" alt="" style="width:100%;height:auto;" />
+      </div>
+      <div class="layer link" style="left:4.01%; top:5.75%; width:1.19%; height:2.79%;" onclick="showView('p4-2')">
+        <img src="images/1-276.png" alt="" />
+      </div>
+    </section>
+
+    <!-- 右下角标注：置于所有页面之上，全局显示 -->
+    <div class="watermark">本项目仅作为作品展示，非商用</div>
+  </div>
+  <!-- 平板外框：叠加在内容之上 -->
+  <img class="frame" src="平板外框.png" alt="" />
+  </div>
+</div>
+<script src="labels.js"></script>
+<script>
+  // 视图切换：显示 id 对应页面，其余隐藏；切换后回到顶部
+  function showView(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    document.querySelectorAll('.view').forEach(function (v) {
+      v.classList.toggle('active', v === el);
+    });
+    el.querySelectorAll('.scroll').forEach(function (s) { s.scrollTop = 0; });
+    // 滚动卡片内的标注热区：页面显示后图片才有高度，重新按比例定位
+    el.querySelectorAll('.layer.noted').forEach(function (n) { if (n._place) n._place(); });
+    playGhostHints(el);   // 方案二：进入页面时播放手势幽灵引导
+  }
+
+  /* ===== 方案二：手势幽灵引导 =====
+     在当前页"主要交互键"上生成手指点击 + 涟漪动画，播放 3 轮后自动移除。
+     GHOST_LABEL 置空则不显示文案；GHOST_MIN_WIDTH 过滤掉过小的按钮（如返回箭头） */
+  var GHOST_LABEL = '';           // 极短文案，不需要可改成 ''
+  var GHOST_MIN_WIDTH = 0;        // 0 = 所有交互键都显示涟漪（含返回键、下拉键等小图标）
+  var GHOST_DURATION = 1.6 * 3 * 1000 + 400;  // 3 轮总时长 + 缓冲
+
+  function playGhostHints(view) {
+    // 先清掉上一轮残留
+    view.querySelectorAll('.ghost-hint').forEach(function (g) { g.remove(); });
+    view.querySelectorAll('.link.ghosting').forEach(function (l) { l.classList.remove('ghosting'); });
+
+    var links = view.querySelectorAll('.link[onclick]');
+    links.forEach(function (link) {
+      var w = parseFloat(link.style.width) || 0;
+      if (w < GHOST_MIN_WIDTH) return;   // 跳过过小的按钮
+
+      link.classList.add('ghosting');
+      var hint = document.createElement('div');
+      hint.className = 'ghost-hint';
+      hint.innerHTML =
+        '<span class="ripple"></span>' +
+        (GHOST_LABEL ? '<span class="ghost-label">' + GHOST_LABEL + '</span>' : '');
+      link.appendChild(hint);
+    });
+    // 涟漪持续循环显示，切换页面时才在下次 playGhostHints 开头被清除重建
+  }
+
+  // 给某个热区元素挂上标注框；text 为空或 "/" 则不挂。
+  // 文字末尾可加方向后缀控制标注位置：@right 右侧 / @left 左侧 / @top 上方（默认下方）。
+  function addHotspotBox(el, text) {
+    if (!text || text.trim() === '/') return;
+    var dir = '';
+    var m = text.match(/\s*@(right|left|top|bottom)\s*$/);
+    if (m) { dir = m[1]; text = text.slice(0, m.index); }   // 剥离后缀，只显示纯文字
+    if (!text.trim()) return;
+    var box = document.createElement('div');
+    box.className = 'hotspot-box' + (dir && dir !== 'bottom' ? ' hotspot-box--' + dir : '');
+    var label = document.createElement('span');
+    label.className = 'hotspot-label';
+    // 文字里的 \n 渲染成换行，可写多行标注
+    text.split('\n').forEach(function (line, i) {
+      if (i) label.appendChild(document.createElement('br'));
+      label.appendChild(document.createTextNode(line));
+    });
+    box.appendChild(label);
+    el.appendChild(box);
+  }
+
+  /* ===== 交互键标注：为每个交互键注入"透明框 + 标注文字" =====
+     标注按 页面id#序号 从 labels.js(window.HOTSPOT_LABELS) 读取，找不到则回退为"标注" */
+  function buildHotspotBoxes() {
+    var labels = window.HOTSPOT_LABELS || {};
+    document.querySelectorAll('.view').forEach(function (view) {
+      var pageId = view.id;
+      view.querySelectorAll('.link[onclick]').forEach(function (link, i) {
+        addHotspotBox(link, labels[pageId + '#' + (i + 1)] || '标注');
+      });
+    });
+  }
+
+  /* ===== 非交互热区标注：按坐标在背景图上圈定区域，触及显示标注 =====
+     用于金币框等"画在背景里、无独立图层"的元素。数据来自 labels.js(window.HOTSPOT_AREAS)。
+     每页一个数组，元素形如 { left, top, width, height, text }，坐标为相对画布的百分比 */
+  function buildHotspotAreas() {
+    var areas = window.HOTSPOT_AREAS || {};
+    document.querySelectorAll('.view').forEach(function (view) {
+      var list = areas[view.id];
+      if (!list) return;
+      var scrolls = view.querySelectorAll('.layer.scroll');   // 该页的滚动卡片，按 DOM 顺序
+      list.forEach(function (a) {
+        if (!a || !a.text || a.text.trim() === '/') return;
+        var el = document.createElement('div');
+        el.className = 'layer noted';   // 复用 .layer 定位与 .noted 的 help 光标
+        el.style.left = a.left; el.style.width = a.width;
+        addHotspotBox(el, a.text);
+
+        if (a.scroll != null && scrolls[a.scroll]) {
+          // 滚动卡片内热区：挂进卡片随内容滚动。left/width 按卡片宽度百分比即可；
+          // top/height 按图片高度比例，用 JS 换算成 px（图片 height:auto，随宽度缩放）。
+          var layer = scrolls[a.scroll];
+          var img = layer.querySelector('img');
+          el.style.position = 'absolute';
+          el.dataset.topFrac = parseFloat(a.top) / 100;
+          el.dataset.hFrac = parseFloat(a.height) / 100;
+          layer.appendChild(el);
+          // 存到元素上，便于切页时重新定位（隐藏页图片高度为 0，需在显示后再算一次）
+          el._place = function () {
+            var h = img.getBoundingClientRect().height || img.offsetHeight;
+            if (!h) return;
+            el.style.top = (h * parseFloat(el.dataset.topFrac)) + 'px';
+            el.style.height = (h * parseFloat(el.dataset.hFrac)) + 'px';
+          };
+          if (img.complete) el._place(); else img.addEventListener('load', el._place);
+          window.addEventListener('resize', el._place);
+        } else {
+          // 背景上的热区：直接按画布百分比定位
+          el.style.top = a.top; el.style.height = a.height;
+          view.appendChild(el);
+        }
+      });
+    });
+  }
+
+  // 首屏进入时：构建标注框，并对默认激活页播放一次引导
+  document.addEventListener('DOMContentLoaded', function () {
+    buildHotspotBoxes();
+    buildHotspotAreas();
+    var first = document.querySelector('.view.active');
+    if (first) playGhostHints(first);
+  });
+
+  // 底部阈值：滚动区剩余 30px 时即视为到底，不再继续滚动，
+  // 避免长图底部圆角与外部圆角矩形区域重叠。
+  var SCROLL_BOTTOM_GAP = 30;
+  document.querySelectorAll('.layer.scroll').forEach(function (s) {
+    s.addEventListener('scroll', function () {
+      var max = s.scrollHeight - s.clientHeight - SCROLL_BOTTOM_GAP;
+      if (max > 0 && s.scrollTop > max) s.scrollTop = max;
+    });
+  });
+</script>
+</body>
+</html>
